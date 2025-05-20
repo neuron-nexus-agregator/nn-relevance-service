@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	model "agregator/relevance/internal/model/db"
 
@@ -33,7 +34,7 @@ func (db *DB) Close() error {
 	return db.db.Close()
 }
 
-func (db *DB) GetRelevanceMetrics(groupID int) ([]*model.GroupRelevanceMetrics, error) {
+func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	query := `
 	WITH ArticleCounts AS (
 		-- CTE для подсчета общего количества статей и уникальных источников
@@ -175,4 +176,28 @@ func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error
 		}
 	}
 	return nil
+}
+
+func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics) {
+	ticker := time.NewTicker(10 * time.Minute)
+	for range ticker.C {
+		metrics, err := db.GetRelevanceMetrics()
+		if err != nil {
+			log.Printf("Ошибка получения метрик: %v", err)
+			continue
+		}
+		for _, met := range metrics {
+			input <- met
+		}
+	}
+}
+
+func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics) {
+	for met := range input {
+		err := db.UpdateRelevance(met)
+		if err != nil {
+			log.Printf("Ошибка обновления метрик: %v", err)
+			continue
+		}
+	}
 }

@@ -43,6 +43,9 @@ func (s *RelevanceService) Output() <-chan *model.GroupRelevanceMetrics {
 
 func (s *RelevanceService) Run() {
 	for metrics := range s.input {
+		if metrics.CalculatedRelevanceScore == -1 {
+			continue
+		}
 		s.Calculate(metrics)
 		s.output <- metrics
 	}
