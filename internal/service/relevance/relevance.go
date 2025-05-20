@@ -15,8 +15,8 @@ type RelevanceService struct {
 func New() *RelevanceService {
 	return &RelevanceService{
 		config: config.New(),
-		input:  make(chan *model.GroupRelevanceMetrics, 100),
-		output: make(chan *model.GroupRelevanceMetrics, 100),
+		input:  make(chan *model.GroupRelevanceMetrics, 1000),
+		output: make(chan *model.GroupRelevanceMetrics, 1000),
 	}
 }
 
@@ -44,9 +44,8 @@ func (s *RelevanceService) Output() <-chan *model.GroupRelevanceMetrics {
 func (s *RelevanceService) Run() {
 	for metrics := range s.input {
 		if metrics.CalculatedRelevanceScore == -1 {
-			continue
+			s.Calculate(metrics)
 		}
-		s.Calculate(metrics)
 		s.output <- metrics
 	}
 }
