@@ -229,12 +229,20 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx contex
 	}
 }
 
-func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics) {
-	for met := range input {
-		err := db.UpdateRelevance(met)
-		if err != nil {
-			log.Printf("Ошибка обновления метрик: %v", err)
-			continue
+func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics, ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case met, ok := <-input:
+			if !ok {
+				return
+			}
+			err := db.UpdateRelevance(met)
+			if err != nil {
+				log.Printf("Ошибка обновления метрик: %v", err)
+				continue
+			}
 		}
 	}
 }

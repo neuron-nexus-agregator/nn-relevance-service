@@ -3,6 +3,7 @@ package relevance
 import (
 	config "agregator/relevance/internal/config"
 	model "agregator/relevance/internal/model/db"
+	"context"
 	"time"
 )
 
@@ -41,11 +42,20 @@ func (s *RelevanceService) Output() <-chan *model.GroupRelevanceMetrics {
 	return s.output
 }
 
-func (s *RelevanceService) Run() {
-	for metrics := range s.input {
-		if metrics.CalculatedRelevanceScore == -1 {
-			s.Calculate(metrics)
+func (s *RelevanceService) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case metrics, ok := <-s.input:
+			if !ok {
+				return
+			}
+			if metrics.CalculatedRelevanceScore == -1 {
+				s.Calculate(metrics)
+			}
+			s.output <- metrics
+
 		}
-		s.output <- metrics
 	}
 }

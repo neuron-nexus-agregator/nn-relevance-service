@@ -32,11 +32,11 @@ func (a *App) Run() {
 	}()
 	go func() {
 		defer wg.Done()
-		db.StartUpdating(output)
+		db.StartUpdating(output, ctx)
 	}()
 	go func() {
 		defer wg.Done()
-		relevanceService.Run()
+		relevanceService.Run(ctx)
 	}()
 	wg.Wait()
 	cancel()
