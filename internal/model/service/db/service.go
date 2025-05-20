@@ -151,3 +151,28 @@ func (db *DB) GetRelevanceMetrics(groupID int) ([]*model.GroupRelevanceMetrics, 
 
 	return metrics, nil // Возвращаем полученные метрики
 }
+
+func (db *DB) UpdateRelevance(metrics *model.GroupRelevanceMetrics) error {
+	query := `
+	UPDATE groups
+	SET
+		relevance_scrore = $1
+	WHERE
+		id = $2
+	`
+	_, err := db.db.Exec(query, metrics.CalculatedRelevanceScore, metrics.GroupID)
+	return err
+}
+
+func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error {
+	if len(metrics) == 0 {
+		return nil
+	}
+	for _, met := range metrics {
+		err := db.UpdateRelevance(met)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
