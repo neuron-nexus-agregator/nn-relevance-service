@@ -111,7 +111,8 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	JOIN GroupAges ga ON g.id = ga.group_id -- Присоединяем возраст группы
 	WHERE
 		-- Фильтр: количество статей в группе больше 1
-		COALESCE(ac.article_count, 0) > 1;
+		COALESCE(ac.article_count, 0) > 1
+		AND g.time >= NOW() - INTERVAL '24 hour'
 	`
 
 	// Выполнение запроса
@@ -169,6 +170,15 @@ func (db *DB) UpdateRelevance(metrics *model.GroupRelevanceMetrics) error {
 	return err
 }
 
+func (db *DB) MakeRelevanceZero() error {
+	query := `
+	UPDATE Groups
+	SET relevance_score = 0
+	WHERE time < NOW() - INTERVAL '24 hour'`
+	_, err := db.db.Exec(query)
+	return err
+}
+
 func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error {
 	if len(metrics) == 0 {
 		return nil
@@ -184,14 +194,24 @@ func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error
 
 func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics) {
 	ticker := time.NewTicker(10 * time.Minute)
-	for range ticker.C {
-		metrics, err := db.GetRelevanceMetrics()
-		if err != nil {
-			log.Printf("Ошибка получения метрик: %v", err)
-			continue
-		}
-		for _, met := range metrics {
-			input <- met
+	day := time.NewTicker(24 * time.Hour)
+	for {
+		select {
+		case <-ticker.C:
+			metrics, err := db.GetRelevanceMetrics()
+			if err != nil {
+				log.Printf("Ошибка получения метрик: %v", err)
+				continue
+			}
+			for _, met := range metrics {
+				input <- met
+			}
+		case <-day.C:
+			err := db.MakeRelevanceZero()
+			if err != nil {
+				log.Printf("Ошибка обнуления метрик: %v", err)
+				continue
+			}
 		}
 	}
 }
