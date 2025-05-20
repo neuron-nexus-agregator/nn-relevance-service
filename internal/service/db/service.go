@@ -91,6 +91,7 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	-- и рассчитывающий calculated_relevance_score с учетом возраста
 	SELECT
 		g.id AS group_id,
+		g.views,
 		COALESCE(ac.article_count, 0) AS article_count, -- Получаем article_count из CTE, COALESCE для групп без статей
 		COALESCE(ac.distinct_source_count, 0) AS distinct_source_count, -- Получаем distinct_source_count из CTE
 		COALESCE(rac.recent_article_count, 0) AS recent_article_count, -- Получаем recent_article_count из CTE, COALESCE для групп без недавних статей
@@ -133,6 +134,7 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 		// Сканирование колонок текущей строки в поля структуры
 		err := rows.Scan(
 			&m.GroupID,
+			&m.Views,
 			&m.ArticleCount,
 			&m.DistinctSourceCount,
 			&m.RecentArticleCount,

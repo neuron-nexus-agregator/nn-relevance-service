@@ -29,7 +29,7 @@ func (s *RelevanceService) Calculate(metrics *model.GroupRelevanceMetrics) {
 	age_decay := s.timeNormalization(1, metrics.GroupAgeSeconds)
 
 	relevance_score := (s.config.W1()*s.logarithmicNirmalixation(float64(metrics.ArticleCount)) + s.config.W2()*s.logarithmicNirmalixation(float64(metrics.DistinctSourceCount)) +
-		s.config.W3()*s.logarithmicNirmalixation(group_momentum) + s.config.W4()*s.logarithmicNirmalixation(metrics.AverageSourceRelevance)) * age_decay
+		s.config.W3()*s.logarithmicNirmalixation(group_momentum) + s.config.W4()*s.logarithmicNirmalixation(metrics.AverageSourceRelevance) + s.config.W5()*s.logarithmicNirmalixation(float64(metrics.Views))) * age_decay
 
 	metrics.CalculatedRelevanceScore = relevance_score
 }

@@ -5,15 +5,17 @@ type Config struct {
 	w2  float64
 	w3  float64
 	w4  float64
+	w5  float64
 	phy float64
 }
 
 func New() *Config {
 	return &Config{
-		w1:  0.2,
-		w2:  0.3,
+		w1:  0.1,
+		w2:  0.2,
 		w3:  0.4,
 		w4:  0.1,
+		w5:  0.2,
 		phy: 0.2,
 	}
 }
@@ -32,6 +34,10 @@ func (c *Config) W3() float64 {
 
 func (c *Config) W4() float64 {
 	return c.w4
+}
+
+func (c *Config) W5() float64 {
+	return c.w5
 }
 
 func (c *Config) Phy() float64 {
