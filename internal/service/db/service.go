@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -192,9 +193,13 @@ func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error
 	return nil
 }
 
-func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics) {
+func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Minute)
-	day := time.NewTicker(24 * time.Hour)
+	day := time.NewTicker(getDurationUntilNextDayMidnight())
+
+	defer ticker.Stop()
+	defer day.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
@@ -204,7 +209,12 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics) {
 				continue
 			}
 			for _, met := range metrics {
-				input <- met
+				select {
+				case input <- met:
+				case <-ctx.Done():
+					return
+				}
+
 			}
 		case <-day.C:
 			err := db.MakeRelevanceZero()
@@ -212,6 +222,9 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics) {
 				log.Printf("Ошибка обнуления метрик: %v", err)
 				continue
 			}
+			day.Reset(getDurationUntilNextDayMidnight())
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -224,4 +237,10 @@ func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics) {
 			continue
 		}
 	}
+}
+
+func getDurationUntilNextDayMidnight() time.Duration {
+	now := time.Now()
+	tomorrow := now.Add(24 * time.Hour).Truncate(24 * time.Hour)
+	return tomorrow.Sub(now)
 }

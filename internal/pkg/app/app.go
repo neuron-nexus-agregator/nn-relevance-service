@@ -3,6 +3,7 @@ package app
 import (
 	"agregator/relevance/internal/service/db"
 	"agregator/relevance/internal/service/relevance"
+	"context"
 	"log"
 	"sync"
 )
@@ -24,9 +25,10 @@ func (a *App) Run() {
 	output := relevanceService.Output()
 	wg := sync.WaitGroup{}
 	wg.Add(3)
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer wg.Done()
-		db.StartReading(input)
+		db.StartReading(input, ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -37,4 +39,5 @@ func (a *App) Run() {
 		relevanceService.Run()
 	}()
 	wg.Wait()
+	cancel()
 }
