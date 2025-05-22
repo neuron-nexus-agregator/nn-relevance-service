@@ -2,6 +2,7 @@ package relevance
 
 import (
 	config "agregator/relevance/internal/config"
+	"agregator/relevance/internal/interfaces"
 	model "agregator/relevance/internal/model/db"
 	"context"
 	"time"
@@ -11,13 +12,15 @@ type RelevanceService struct {
 	config *config.Config
 	input  chan (*model.GroupRelevanceMetrics)
 	output chan (*model.GroupRelevanceMetrics)
+	logger interfaces.Logger
 }
 
-func New() *RelevanceService {
+func New(logger interfaces.Logger) *RelevanceService {
 	return &RelevanceService{
 		config: config.New(),
 		input:  make(chan *model.GroupRelevanceMetrics, 1000),
 		output: make(chan *model.GroupRelevanceMetrics, 1000),
+		logger: logger,
 	}
 }
 
@@ -46,6 +49,7 @@ func (s *RelevanceService) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			s.logger.Info("Relevance service stopped due to context cancellation")
 			return
 		case metrics, ok := <-s.input:
 			if !ok {

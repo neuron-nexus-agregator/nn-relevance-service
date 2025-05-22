@@ -1,6 +1,7 @@
 package app
 
 import (
+	"agregator/relevance/internal/interfaces"
 	"agregator/relevance/internal/service/db"
 	"agregator/relevance/internal/service/relevance"
 	"context"
@@ -15,12 +16,12 @@ func New() *App {
 	return &App{}
 }
 
-func (a *App) Run() {
-	db, err := db.New(5)
+func (a *App) Run(logger interfaces.Logger) {
+	db, err := db.New(5, logger)
 	if err != nil {
 		log.Fatal(err)
 	}
-	relevanceService := relevance.New()
+	relevanceService := relevance.New(logger)
 	input := relevanceService.Input()
 	output := relevanceService.Output()
 	wg := sync.WaitGroup{}

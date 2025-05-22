@@ -3,21 +3,23 @@ package db
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"time"
 
 	model "agregator/relevance/internal/model/db"
+
+	"agregator/relevance/internal/interfaces"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
 
 type DB struct {
-	db *sqlx.DB
+	db     *sqlx.DB
+	logger interfaces.Logger
 }
 
-func New(maxConnections int) (*DB, error) {
+func New(maxConnections int, logger interfaces.Logger) (*DB, error) {
 	connectionData := fmt.Sprintf(
 		"user=%s dbname=%s sslmode=disable password=%s host=%s port=%s",
 		os.Getenv("DB_LOGIN"),
@@ -29,6 +31,7 @@ func New(maxConnections int) (*DB, error) {
 
 	conn, err := sqlx.Connect("postgres", connectionData)
 	if err != nil {
+		logger.Error("Failed to connect to database", "error", err)
 		return nil, err
 	}
 
@@ -36,7 +39,10 @@ func New(maxConnections int) (*DB, error) {
 	conn.SetMaxIdleConns(maxConnections / 2)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
-	return &DB{db: conn}, nil
+	return &DB{
+		db:     conn,
+		logger: logger,
+	}, nil
 }
 
 func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
@@ -86,7 +92,7 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	rows, err := db.db.Query(query)
 	if err != nil {
 		// Логируем ошибку и возвращаем ее
-		log.Printf("Ошибка выполнения запроса метрик актуальности: %v", err)
+		db.logger.Error("Ошибка выполнения запроса метрик актуальности", "error", err)
 		return nil, fmt.Errorf("ошибка выполнения запроса метрик актуальности: %w", err)
 	}
 	defer rows.Close() // Обязательно закрываем rows после использования
@@ -110,7 +116,7 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 		)
 		if err != nil {
 			// Логируем ошибку сканирования и возвращаем ее
-			log.Printf("Ошибка сканирования строки результатов: %v", err)
+			db.logger.Error("Ошибка сканирования строки результатов", "error", err)
 			return nil, fmt.Errorf("ошибка сканирования строки результатов: %w", err)
 		}
 		metrics = append(metrics, &m) // Добавляем полученную структуру в слайс
@@ -119,7 +125,7 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	// Проверка на ошибки после завершения итерации
 	if err = rows.Err(); err != nil {
 		// Логируем ошибку итерации и возвращаем ее
-		log.Printf("Ошибка при итерации по результатам запроса: %v", err)
+		db.logger.Error("Ошибка при итерации по результатам запроса", "error", err)
 		return nil, fmt.Errorf("ошибка при итерации по результатам запроса: %w", err)
 	}
 
@@ -135,7 +141,11 @@ func (db *DB) UpdateRelevance(metrics *model.GroupRelevanceMetrics) error {
 		id = $2
 	`
 	_, err := db.db.Exec(query, metrics.CalculatedRelevanceScore, metrics.GroupID)
-	return err
+	if err != nil {
+		db.logger.Error("Ошибка обновления метрик актуальности", "error", err)
+		return err
+	}
+	return nil
 }
 
 func (db *DB) MakeRelevanceZero() error {
@@ -144,7 +154,11 @@ func (db *DB) MakeRelevanceZero() error {
 	SET relevance_score = 0
 	WHERE time < NOW() - INTERVAL '24 hour'`
 	_, err := db.db.Exec(query)
-	return err
+	if err != nil {
+		db.logger.Error("Ошибка обнуления метрик актуальности", "error", err)
+		return err
+	}
+	return nil
 }
 
 func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error {
@@ -154,6 +168,7 @@ func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error
 	for _, met := range metrics {
 		err := db.UpdateRelevance(met)
 		if err != nil {
+			db.logger.Error("Ошибка обновления метрик актуальности", "error", err)
 			return err
 		}
 	}
@@ -172,13 +187,14 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx contex
 		case <-ticker.C:
 			metrics, err := db.GetRelevanceMetrics()
 			if err != nil {
-				log.Printf("Ошибка получения метрик: %v", err)
+				db.logger.Error("Ошибка получения метрик актуальности", "error", err)
 				continue
 			}
 			for _, met := range metrics {
 				select {
 				case input <- met:
 				case <-ctx.Done():
+					db.logger.Info("Stopped due to context done")
 					return
 				}
 
@@ -186,11 +202,12 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx contex
 		case <-day.C:
 			err := db.MakeRelevanceZero()
 			if err != nil {
-				log.Printf("Ошибка обнуления метрик: %v", err)
+				db.logger.Error("Ошибка обнуления метрик", "error", err)
 				continue
 			}
 			day.Reset(getDurationUntilNextDayMidnight())
 		case <-ctx.Done():
+			db.logger.Info("Stopped due to context done")
 			return
 		}
 	}
@@ -200,6 +217,7 @@ func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics, ctx conte
 	for {
 		select {
 		case <-ctx.Done():
+			db.logger.Info("Stopped due to context done")
 			return
 		case met, ok := <-input:
 			if !ok {
@@ -207,7 +225,7 @@ func (db *DB) StartUpdating(input <-chan *model.GroupRelevanceMetrics, ctx conte
 			}
 			err := db.UpdateRelevance(met)
 			if err != nil {
-				log.Printf("Ошибка обновления метрик: %v", err)
+				db.logger.Error("Ошибка обновления метрик", "error", err)
 				continue
 			}
 		}
