@@ -41,80 +41,45 @@ func New(maxConnections int) (*DB, error) {
 
 func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 	query := `
-	WITH ArticleCounts AS (
-		-- CTE для подсчета общего количества статей и уникальных источников
-		SELECT
-			group_id,
-			COUNT(feed_id) AS article_count,
-			COUNT(DISTINCT f.source_name) AS distinct_source_count
-		FROM Compares c
-		JOIN Feed f ON c.feed_id = f.id
-		GROUP BY group_id
-	),
-	RecentArticleCounts AS (
-		-- CTE для подсчета количества статей за последний час
-		SELECT
-			group_id,
-			COUNT(feed_id) AS recent_article_count
-		FROM Compares c
-		JOIN Feed f ON c.feed_id = f.id
-		WHERE f.time >= NOW() - INTERVAL '1 hour' -- Фильтр по времени
-		GROUP BY group_id
-	),
-	SourceRelevance AS (
-		-- CTE для вычисления среднего рейтинга источников (используем поле relevance)
-		SELECT
-			group_id,
-			AVG(s.relevance) AS average_source_relevance -- Использование поля relevance
-		FROM Compares c
-		JOIN Feed f ON c.feed_id = f.id
-		JOIN sources s ON f.source_name = s.name
-		GROUP BY group_id
-	),
-	LastArticleTime AS (
-		-- CTE для нахождения времени последней статьи в каждой группе
-		SELECT
-			group_id,
-			MAX(f.time) AS last_article_time
-		FROM Compares c
-		JOIN Feed f ON c.feed_id = f.id
-		GROUP BY group_id
+	WITH GroupMetrics AS (
+    SELECT
+        c.group_id,
+        COUNT(c.feed_id) AS article_count,
+        COUNT(DISTINCT f.source_name) AS distinct_source_count,
+        COUNT(c.feed_id) FILTER (WHERE f.time >= NOW() - INTERVAL '1 hour') AS recent_article_count,
+        AVG(COALESCE(s.relevance, 0.0)) AS average_source_relevance,
+        MAX(f.time) AS last_article_time
+    FROM Compares c
+    JOIN Feed f ON c.feed_id = f.id
+    LEFT JOIN Sources s ON f.source_name = s.name
+    GROUP BY c.group_id
+	HAVING COUNT(c.feed_id) > 1
 	),
 	GroupAges AS (
-		-- CTE для расчета возраста группы в секундах
-		SELECT
-			id AS group_id,
-			COALESCE(EXTRACT(EPOCH FROM (NOW() - g.time)), 0.0) AS group_age_seconds
-		FROM Groups g
+    	SELECT
+        	id AS group_id,
+        	COALESCE(EXTRACT(EPOCH FROM (NOW() - g.time)), 0.0) AS group_age_seconds
+    	FROM Groups g
 	)
-	-- Финальный SELECT, объединяющий результаты из всех CTE, добавляющий возраст группы
-	-- и рассчитывающий calculated_relevance_score с учетом возраста
 	SELECT
-		g.id AS group_id,
-		g.views AS views,
-		COALESCE(ac.article_count, 0) AS article_count, -- Получаем article_count из CTE, COALESCE для групп без статей
-		COALESCE(ac.distinct_source_count, 0) AS distinct_source_count, -- Получаем distinct_source_count из CTE
-		COALESCE(rac.recent_article_count, 0) AS recent_article_count, -- Получаем recent_article_count из CTE, COALESCE для групп без недавних статей
-		COALESCE(sr.average_source_relevance, 0.0) AS average_source_relevance, -- Получаем average_source_relevance из CTE, COALESCE для групп без источников
-		-- Время с момента последней статьи в секундах
-		COALESCE(EXTRACT(EPOCH FROM (NOW() - lat.last_article_time)), 0.0) AS time_since_last_article_seconds,
-		-- Возраст группы в секундах
-		ga.group_age_seconds,
-		-- Рассчитываем calculated_relevance_score: если возраст >= 24 часов, то 0, иначе -1 (для последующего расчета в Golang)
-		CASE
-			WHEN ga.group_age_seconds >= 24 * 3600 THEN 0.0
-			ELSE -1.0 -- Используем -1.0 как маркер для групп, которым нужно рассчитать реальную оценку в Golang
-		END AS calculated_relevance_score
+    	g.id AS group_id,
+    	g.views AS views,
+    	COALESCE(gm.article_count, 0) AS article_count,
+    	COALESCE(gm.distinct_source_count, 0) AS distinct_source_count,
+    	COALESCE(gm.recent_article_count, 0) AS recent_article_count,
+    	COALESCE(gm.average_source_relevance, 0.0) AS average_source_relevance,
+    	COALESCE(EXTRACT(EPOCH FROM (NOW() - gm.last_article_time)), 0.0) AS time_since_last_article_seconds,
+    	ga.group_age_seconds,
+    	CASE
+    	    WHEN ga.group_age_seconds >= 24 * 3600 THEN 0.0
+    	    ELSE -1.0
+    	END AS calculated_relevance_score
 	FROM Groups g
-	LEFT JOIN ArticleCounts ac ON g.id = ac.group_id -- Присоединяем метрики общего количества статей
-	LEFT JOIN RecentArticleCounts rac ON g.id = rac.group_id -- Присоединяем метрики недавних статей
-	LEFT JOIN SourceRelevance sr ON g.id = sr.group_id -- Присоединяем метрики релевантности источников
-	LEFT JOIN LastArticleTime lat ON g.id = lat.group_id -- Присоединяем время последней статьи
-	JOIN GroupAges ga ON g.id = ga.group_id -- Присоединяем возраст группы
+	LEFT JOIN GroupMetrics gm ON g.id = gm.group_id
+	JOIN GroupAges ga ON g.id = ga.group_id
 	WHERE
-		-- Фильтр: количество статей в группе больше 1
-		COALESCE(ac.article_count, 0) > 1
-		AND g.time >= NOW() - INTERVAL '24 hour'
+    	COALESCE(gm.article_count, 0) > 1
+    	AND g.time >= NOW() - INTERVAL '24 hour'
 	`
 
 	// Выполнение запроса
