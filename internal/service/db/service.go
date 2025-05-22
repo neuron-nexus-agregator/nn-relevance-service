@@ -175,7 +175,7 @@ func (db *DB) UpdateRelevance(metrics *model.GroupRelevanceMetrics) error {
 
 func (db *DB) MakeRelevanceZero() error {
 	query := `
-	UPDATE Groups
+	UPDATE groups
 	SET relevance_score = 0
 	WHERE time < NOW() - INTERVAL '24 hour'`
 	_, err := db.db.Exec(query)
