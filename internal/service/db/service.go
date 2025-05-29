@@ -19,7 +19,7 @@ type DB struct {
 	logger interfaces.Logger
 }
 
-func New(maxConnections int, logger interfaces.Logger) (*DB, error) {
+func New(logger interfaces.Logger) (*DB, error) {
 	connectionData := fmt.Sprintf(
 		"user=%s dbname=%s sslmode=disable password=%s host=%s port=%s",
 		os.Getenv("DB_LOGIN"),
@@ -35,8 +35,8 @@ func New(maxConnections int, logger interfaces.Logger) (*DB, error) {
 		return nil, err
 	}
 
-	conn.SetMaxOpenConns(maxConnections)
-	conn.SetMaxIdleConns(maxConnections / 2)
+	conn.SetMaxOpenConns(4)
+	conn.SetMaxIdleConns(1)
 	conn.SetConnMaxLifetime(5 * time.Minute)
 
 	return &DB{
@@ -46,46 +46,29 @@ func New(maxConnections int, logger interfaces.Logger) (*DB, error) {
 }
 
 func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
+	db.logger.Info("Getting relevance metrics")
 	query := `
-	WITH GroupMetrics AS (
-    SELECT
-        c.group_id,
-        COUNT(c.feed_id) AS article_count,
-        COUNT(DISTINCT f.source_name) AS distinct_source_count,
-        COUNT(c.feed_id) FILTER (WHERE f.time >= NOW() - INTERVAL '1 hour') AS recent_article_count,
-        AVG(COALESCE(s.relevance, 0.0)) AS average_source_relevance,
-        MAX(f.time) AS last_article_time
-    FROM Compares c
-    JOIN Feed f ON c.feed_id = f.id
-    LEFT JOIN Sources s ON f.source_name = s.name
-    GROUP BY c.group_id
-	HAVING COUNT(c.feed_id) > 1
-	),
-	GroupAges AS (
-    	SELECT
-        	id AS group_id,
-        	COALESCE(EXTRACT(EPOCH FROM (NOW() - g.time)), 0.0) AS group_age_seconds
-    	FROM Groups g
-	)
 	SELECT
     	g.id AS group_id,
     	g.views AS views,
-    	COALESCE(gm.article_count, 0) AS article_count,
-    	COALESCE(gm.distinct_source_count, 0) AS distinct_source_count,
-    	COALESCE(gm.recent_article_count, 0) AS recent_article_count,
-    	COALESCE(gm.average_source_relevance, 0.0) AS average_source_relevance,
-    	COALESCE(EXTRACT(EPOCH FROM (NOW() - gm.last_article_time)), 0.0) AS time_since_last_article_seconds,
-    	ga.group_age_seconds,
+    	COALESCE(COUNT(c.feed_id), 0) AS article_count,
+    	COALESCE(COUNT(DISTINCT f.source_name), 0) AS distinct_source_count,
+    	COALESCE(COUNT(c.feed_id) FILTER (WHERE f.time >= NOW() - INTERVAL '1 hour'), 0) AS recent_article_count,
+    	COALESCE(AVG(s.relevance), 0.0) AS average_source_relevance,
+    	COALESCE(EXTRACT(EPOCH FROM (NOW() - MAX(f.time))), 0.0) AS time_since_last_article_seconds,
+    	COALESCE(EXTRACT(EPOCH FROM (NOW() - g.time)), 0.0) AS group_age_seconds,
     	CASE
-    	    WHEN ga.group_age_seconds >= 24 * 3600 THEN 0.0
-    	    ELSE -1.0
+        	WHEN COALESCE(EXTRACT(EPOCH FROM (NOW() - g.time)), 0.0) >= 24 * 3600 THEN 0.0
+        	ELSE -1.0
     	END AS calculated_relevance_score
 	FROM Groups g
-	LEFT JOIN GroupMetrics gm ON g.id = gm.group_id
-	JOIN GroupAges ga ON g.id = ga.group_id
+	LEFT JOIN Compares c ON g.id = c.group_id
+	LEFT JOIN Feed f ON c.feed_id = f.id
+	LEFT JOIN Sources s ON f.source_name = s.name
 	WHERE
-    	COALESCE(gm.article_count, 0) > 1
-    	AND g.time >= NOW() - INTERVAL '24 hour'
+    	g.time >= NOW() - INTERVAL '24 hour'
+	GROUP BY g.id, g.views, g.time -- Добавлено g.time в GROUP BY
+	HAVING COALESCE(COUNT(c.feed_id), 0) > 1;
 	`
 
 	// Выполнение запроса
@@ -128,15 +111,16 @@ func (db *DB) GetRelevanceMetrics() ([]*model.GroupRelevanceMetrics, error) {
 		db.logger.Error("Ошибка при итерации по результатам запроса", "error", err)
 		return nil, fmt.Errorf("ошибка при итерации по результатам запроса: %w", err)
 	}
-
+	db.logger.Info("Получены метрики актуальности", "metrics", len(metrics))
 	return metrics, nil // Возвращаем полученные метрики
 }
 
 func (db *DB) UpdateRelevance(metrics *model.GroupRelevanceMetrics) error {
+	db.logger.Info("Обновление метрик актуальности", "id", metrics.GroupID, "relevance", metrics.CalculatedRelevanceScore, "metrcis", metrics)
 	query := `
 	UPDATE groups
 	SET
-		relevance_scrore = $1
+		relevance_score = $1
 	WHERE
 		id = $2
 	`
@@ -175,7 +159,25 @@ func (db *DB) UpdateRelevanceBatch(metrics []*model.GroupRelevanceMetrics) error
 	return nil
 }
 
+func (db *DB) update(input chan<- *model.GroupRelevanceMetrics, ctx context.Context) {
+	metrics, err := db.GetRelevanceMetrics()
+	if err != nil {
+		db.logger.Error("Ошибка получения метрик актуальности", "error", err)
+		return
+	}
+	for _, met := range metrics {
+		select {
+		case input <- met:
+		case <-ctx.Done():
+			db.logger.Info("Stopped due to context done")
+			return
+		}
+
+	}
+}
+
 func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx context.Context) {
+	db.update(input, ctx)
 	ticker := time.NewTicker(10 * time.Minute)
 	day := time.NewTicker(getDurationUntilNextDayMidnight())
 
@@ -185,20 +187,7 @@ func (db *DB) StartReading(input chan<- *model.GroupRelevanceMetrics, ctx contex
 	for {
 		select {
 		case <-ticker.C:
-			metrics, err := db.GetRelevanceMetrics()
-			if err != nil {
-				db.logger.Error("Ошибка получения метрик актуальности", "error", err)
-				continue
-			}
-			for _, met := range metrics {
-				select {
-				case input <- met:
-				case <-ctx.Done():
-					db.logger.Info("Stopped due to context done")
-					return
-				}
-
-			}
+			db.update(input, ctx)
 		case <-day.C:
 			err := db.MakeRelevanceZero()
 			if err != nil {

@@ -17,7 +17,7 @@ func New() *App {
 }
 
 func (a *App) Run(logger interfaces.Logger) {
-	db, err := db.New(5, logger)
+	db, err := db.New(logger)
 	if err != nil {
 		log.Fatal(err)
 	}
