@@ -11,11 +11,11 @@ type Config struct {
 
 func New() *Config {
 	return &Config{
-		w1:  0.1,
-		w2:  0.2,
-		w3:  0.4,
-		w4:  0.1,
-		w5:  0.2,
+		w1:  0.3,
+		w2:  0.3,
+		w3:  0.05,
+		w4:  0.05,
+		w5:  0.3,
 		phy: 0.02,
 	}
 }

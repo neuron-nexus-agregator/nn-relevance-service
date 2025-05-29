@@ -25,14 +25,10 @@ func New(logger interfaces.Logger) *RelevanceService {
 }
 
 func (s *RelevanceService) Calculate(metrics *model.GroupRelevanceMetrics) {
-	article_velocity := float64(metrics.RecentArticleCount) / time.Hour.Seconds()
-
-	group_momentum := s.timeNormalization(article_velocity, metrics.TimeSinceLastArticleSeconds)
-
-	age_decay := s.timeNormalization(1, metrics.GroupAgeSeconds)
+	age_decay := s.timeNormalization(metrics.GroupAgeSeconds / time.Hour.Seconds())
 
 	relevance_score := (s.config.W1()*s.logarithmicNirmalixation(float64(metrics.ArticleCount)) + s.config.W2()*s.logarithmicNirmalixation(float64(metrics.DistinctSourceCount)) +
-		s.config.W3()*s.logarithmicNirmalixation(group_momentum) + s.config.W4()*s.logarithmicNirmalixation(metrics.AverageSourceRelevance) + s.config.W5()*s.logarithmicNirmalixation(float64(metrics.Views))) * age_decay
+		s.config.W3()*s.logarithmicNirmalixation(float64(metrics.RecentArticleCount)) + s.config.W4()*s.logarithmicNirmalixation(metrics.AverageSourceRelevance) + s.config.W5()*s.logarithmicNirmalixation(float64(metrics.Views))) * age_decay
 
 	metrics.CalculatedRelevanceScore = relevance_score
 }
